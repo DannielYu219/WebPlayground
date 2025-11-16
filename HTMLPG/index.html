@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>高强度CPU压力测试</title>
+    <style>
+        /* 优化后的样式 */
+        :root {
+            --primary: #2196F3;
+            --danger: #f44336;
+        }
+        /* 保持原有样式结构，新增线程监控面板 */
+        .thread-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 1rem;
+            margin: 1rem 0;
+        }
+        .thread-card {
+            background: #fff;
+            padding: 1rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>多核CPU压力测试</h1>
+        <button onclick="startStressTest()" id="stressBtn">开始极限测试</button>
+        <div class="thread-panel" id="threadContainer"></div>
+        <div class="result" id="stressResult"></div>
+    </div>
+
+    <script>
+        const WORKER_NUM = navigator.hardwareConcurrency || 1; // 根据CPU核心数动态调整
+        const DURATION = 20000; // 测试持续时间20秒
+        let workers = [];
+        
+        // 高强度计算任务
+        class IntensiveWork {
+            static matrixMultiplication(size=256) {
+                // 创建两个size x size的随机矩阵
+                const createMatrix = () => 
+                    Array.from({length: size}, () => 
+                        Array.from({length: size}, () => Math.random()));
+                
+                const a = createMatrix();
+                const b = createMatrix();
+                const result = [];
+                
+                // 矩阵乘法计算
+                for(let i=0; i<size; i++){
+                    result[i] = [];
+                    for(let j=0; j<size; j++){
+                        let sum = 0;
+                        for(let k=0; k<size; k++){
+                            sum += a[i][k] * b[k][j];
+                        }
+                        result[i][j] = sum;
+                    }
+                }
+                return result;
+            }
+
+            static cryptographicHash() {
+                // 模拟加密哈希计算
+                let hash = new Uint8Array(1024);
+                for(let i=0; i<100000; i++){
+                    hash = new Uint8Array(
+                        hash.map(byte => 
+                            (byte << 3) ^ (byte >> 5) + i
+                        )
+                    );
+                }
+                return hash;
+            }
+        }
+
+        // 创建Web Workers集群
+        function createWorkerCluster() {
+            const workerScript = `
+                self.onmessage = function(e) {
+                    const start = performance.now();
+                    let ops = 0;
+                    while(performance.now() - start < ${DURATION}) {
+                        IntensiveWork.matrixMultiplication();
+                        IntensiveWork.cryptographicHash();
+                        ops++;
+                    }
+                    self.postMessage({ops});
+                };
+                ${IntensiveWork.toString()}
+            `;
+            
+            const blob = new Blob([workerScript], {type: 'text/javascript'});
+            return new Array(WORKER_NUM).fill().map(() => 
+                new Worker(URL.createObjectURL(blob))
+            );
+        }
+
+        async function startStressTest() {
+            const btn = document.getElementById('stressBtn');
+            btn.disabled = true;
+            workers = createWorkerCluster();
+            
+            // 初始化监控界面
+            const threadContainer = document.getElementById('threadContainer');
+            threadContainer.innerHTML = workers.map((_,i) => `
+                <div class="thread-card" id="thread${i}">
+                    <h4>工作线程 ${i+1}</h4>
+                    <div class="progress-bar">
+                        <div class="progress" style="width:0%"></div>
+                    </div>
+                    <p>操作次数: <span class="ops">0</span></p>
+                </div>
+            `).join('');
+
+            // 启动压力测试
+            const startTime = performance.now();
+            const results = await Promise.all(workers.map((worker, i) => 
+                new Promise(resolve => {
+                    worker.onmessage = (e) => {
+                        document.querySelector(`#thread${i} .ops`).textContent = 
+                            e.data.ops.toLocaleString();
+                        resolve(e.data.ops);
+                    };
+                    worker.postMessage('start');
+                })
+            ));
+
+            // 计算综合得分
+            const totalOps = results.reduce((a,b) => a + b, 0);
+            const time = (performance.now() - startTime) / 1000;
+            const score = Math.round((totalOps / time) * 100);
+            
+            document.getElementById('stressResult').innerHTML = `
+                <h3>压力测试完成！</h3>
+                <p>总操作次数: ${totalOps.toLocaleString()}</p>
+                <p>持续时间: ${time.toFixed(1)}秒</p>
+                <p>综合性能指数: ${score}</p>
+                <p>多核利用率: ${calculateCoreUtilization(results)}%</p>
+            `;
+
+            workers.forEach(w => w.terminate());
+            btn.disabled = false;
+        }
+
+        // 核心利用率算法
+        function calculateCoreUtilization(results) {
+            const maxOps = Math.max(...results);
+            const avgOps = results.reduce((a,b) => a + b, 0) / results.length;
+            return Math.round((avgOps / maxOps) * 100);
+        }
+    </script>
+</body>
+</html>
